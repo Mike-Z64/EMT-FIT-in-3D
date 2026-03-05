@@ -1,0 +1,179 @@
+import numpy as np
+import matplotlib.pyplot as plt
+import scipy.sparse as sp
+from pprint import pprint
+
+def FITGridEven(x_len, y_len, z_len, nx, ny, nz):
+    """Create a 3D FIT grid using a nested dictionary structure."""
+
+    ### Main dictionary with metadata and nested grids: G and G_hat have the same variable names for consistency
+    grid = {
+        "nx": nx,     # Number of points in x-direction (same for primary and dual)
+        "ny": ny,     # Number of points in y-direction (same for primary and dual)
+        "nz": nz,     # Number of points in z-direction (same for primary and dual)
+        "G": {},      # Primary Grid
+        "G_hat": {}   # Dual/Staggered Grid
+    }
+
+    ### ------ PRIMARY GRID G -------
+    # Coordinates
+    grid["G"]["x"] = np.linspace(0, x_len, nx)
+    grid["G"]["y"] = np.linspace(0, y_len, ny)
+    grid["G"]["z"] = np.linspace(0, z_len, nz)
+
+    # Compute physical spacings of each cell (assuming uniform grid)
+    dx = x_len / (nx - 1)
+    dy = y_len / (ny - 1)
+    dz = z_len / (nz - 1)
+    
+    grid["G"]["dx"] = dx
+    grid["G"]["dy"] = dy
+    grid["G"]["dz"] = dz
+
+    # Meshgrids for areas and volumes
+    # Note: We use nx-1 for cell-based dimensions
+    DX, DY, DZ = np.meshgrid(
+        np.full(nx-1, dx), np.full(ny-1, dy), np.full(nz-1, dz), indexing="ij"
+    )
+    
+    grid["G"]["area_x"] = DY * DZ
+    grid["G"]["area_y"] = DX * DZ
+    grid["G"]["area_z"] = DX * DY
+    grid["G"]["volume"] = DX * DY * DZ
+
+    ### ------ DUAL GRID G_HAT -------
+    # Shifted points (staggered by half a cell)
+    grid["G_hat"]["x"] = grid["G"]["x"][:] + (dx / 2.0) # previously used grid["G"]["x"][:-1] but we want to keep the same number of points
+    grid["G_hat"]["y"] = grid["G"]["y"][:] + (dy / 2.0)
+    grid["G_hat"]["z"] = grid["G"]["z"][:] + (dz / 2.0)
+
+    # In an even grid, dual spacings are identical
+    grid["G_hat"]["dx"] = dx
+    grid["G_hat"]["dy"] = dy
+    grid["G_hat"]["dz"] = dz
+
+    # Dual geometry matches primary cell geometry in this setup, so we can copy the areas and volumes
+    grid["G_hat"]["area_x"] = grid["G"]["area_x"].copy()
+    grid["G_hat"]["area_y"] = grid["G"]["area_y"].copy()
+    grid["G_hat"]["area_z"] = grid["G"]["area_z"].copy()
+    grid["G_hat"]["volume"] = grid["G"]["volume"].copy()
+
+    # plotting for verification
+    plot_grids(grid)
+    print(f"Grid successfully created with {nx * ny * nz} total nodes!")
+    return grid
+
+def topological_matrices(grid):
+    """Compute topological operators and store them in the nested structure."""
+    
+    # we can just extract the grid dimensions into nx,ny,nz for simplicity
+    nx, ny, nz = grid["nx"], grid["ny"], grid["nz"]
+
+    # Differentiation matrices (P) for x, y, z directions using central differences ; .tocsr() converts to Compressed Sparse Row format for more efficient math
+    Px = sp.diags([-1, 1], [0, 1], shape=(nx, nx)).tocsr()
+    Py = sp.diags([-1, 1], [0, 1], shape=(ny, ny)).tocsr()
+    Pz = sp.diags([-1, 1], [0, 1], shape=(nz, nz)).tocsr()
+
+    # Identity matrices for Kronecker products
+    Ix, Iy, Iz = sp.eye(nx), sp.eye(ny), sp.eye(nz)
+
+    # 3D Discrete Gradient operators
+    Dx = sp.kron(Iz, sp.kron(Iy, Px)).tocsr()
+    Dy = sp.kron(Iz, sp.kron(Py, Ix)).tocsr()
+    Dz = sp.kron(Pz, sp.kron(Iy, Ix)).tocsr()
+
+    # Curl Matrix (C)
+    C = sp.bmat([
+        [None, -Dz, Dy],
+        [Dz, None, -Dx],
+        [-Dy, Dx, None],
+    ], format="csr")
+
+    C_hat = C.transpose()
+
+    # Divergence Matrix (S)
+    S = sp.bmat([[Dx, Dy, Dz]], format="csr")
+    
+    S_hat = S.transpose()
+
+    # Store matrices in the top level or a specific sub-dict
+    grid["operators"] = {"C": C, "S": S, "C_hat": C_hat, "S_hat": S_hat}
+
+    return C, S, C_hat, S_hat
+
+def plot_grids(grid):
+    """Generates a 3D plot and two 2D cross-sections of the primary and dual grids."""
+    
+    # Extract coordinates for easier typing
+    x_G, y_G, z_G = grid["G"]["x"], grid["G"]["y"], grid["G"]["z"]
+    x_H, y_H, z_H = grid["G_hat"]["x"], grid["G_hat"]["y"], grid["G_hat"]["z"]
+
+    fig = plt.figure(figsize=(14, 10))
+
+    # --- 1. 3D Plot (Left Side) ---
+    ax1 = fig.add_subplot(1, 2, 1, projection='3d')
+    
+    # Create 3D mesh for Primary Grid
+    XG, YG, ZG = np.meshgrid(x_G, y_G, z_G, indexing='ij')
+    ax1.scatter(XG, YG, ZG, color='blue', alpha=0.3, s=20, label='Primary (G)')
+
+    # Create 3D mesh for Dual Grid
+    XH, YH, ZH = np.meshgrid(x_H, y_H, z_H, indexing='ij')
+    ax1.scatter(XH, YH, ZH, color='red', alpha=0.8, s=40, label='Dual (G_hat)')
+
+    ax1.set_title("3D Grid View")
+    ax1.set_xlabel("X (m)")
+    ax1.set_ylabel("Y (m)")
+    ax1.set_zlabel("Z (m)")
+    ax1.legend()
+
+    # --- 2. 2D XY Cross-section (Top Right) ---
+    ax2 = fig.add_subplot(2, 2, 2)
+    XG2, YG2 = np.meshgrid(x_G, y_G, indexing='ij')
+    XH2, YH2 = np.meshgrid(x_H, y_H, indexing='ij')
+    
+    ax2.scatter(XG2, YG2, color='blue', alpha=0.3, s=20)
+    ax2.scatter(XH2, YH2, color='red', s=40)
+    ax2.set_title("XY Plane Cross-section (Z=0)")
+    ax2.set_xlabel("X")
+    ax2.set_ylabel("Y")
+    ax2.grid(True, linestyle='--', alpha=0.5)
+
+    # --- 3. 2D XZ Cross-section (Bottom Right) ---
+    ax3 = fig.add_subplot(2, 2, 4)
+    XG3, ZG3 = np.meshgrid(x_G, z_G, indexing='ij')
+    XH3, ZH3 = np.meshgrid(x_H, z_H, indexing='ij')
+    
+    ax3.scatter(XG3, ZG3, color='blue', alpha=0.3, s=20)
+    ax3.scatter(XH3, ZH3, color='red', s=40)
+    ax3.set_title("XZ Plane Cross-section (Y=0)")
+    ax3.set_xlabel("X")
+    ax3.set_ylabel("Z")
+    ax3.grid(True, linestyle='--', alpha=0.5)
+
+    plt.tight_layout()
+    plt.show()
+
+def main():
+    # Setup simulation volume
+    grid = FITGridEven(x_len=1.0, y_len=1.0, z_len=1.0, nx=3, ny=3, nz=3)
+    C_matrix, S_matrix = topological_matrices(grid)
+
+    print("\n--- Verification ---")
+    # Accessing nested data
+    print(f"Primary X points: {grid['G']['x']}")
+    print(f"Dual X points:    {grid['G_hat']['x']}")
+    print(f"Curl Matrix Shape: {grid['operators']['C'].shape}")
+    print(f"Div Matrix Shape:  {grid['operators']['S'].shape}")
+
+    ## Verification step from Weiland, 2001, (19): S*C=0
+    verification_matrix = S_matrix @ C_matrix
+    # Check how many non-zero elements exist
+    non_zero_count = verification_matrix.nnz
+    # Print a clean report
+    print(f"--- Topological Verification ---")
+    print(f"Is Div * Curl = 0? {'YES' if non_zero_count == 0 else 'NO'}")
+    print(f"Number of non-zero elements in product: {non_zero_count}")
+
+if __name__ == "__main__":
+    main()
