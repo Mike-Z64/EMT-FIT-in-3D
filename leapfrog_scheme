@@ -1,9 +1,10 @@
-def leapfrog_scheme(e, h, b, d, C, C_hat, M_eps, M_mu, j_source, delta_t, n_steps):
+def leapfrog_scheme(e_initial, h_initial, b, d, C, C_hat, M_eps, M_mu, j_source, delta_t, n_steps):
     """
     Leapfrog scheme function
     ------------------------
     Parameters:
-    e - electric field
+    e_initial - initial electric field
+    h_initial - initial magnetic field
     h - magnetic field
     b - magnetic flux density
     d - electric displacement
@@ -18,12 +19,28 @@ def leapfrog_scheme(e, h, b, d, C, C_hat, M_eps, M_mu, j_source, delta_t, n_step
     Returns:
     e - updated electric field
     h - updated magnetic field
+
+    General Notes:
+    - The leapfrog scheme updates the electric and magnetic fields in a staggered manner 
+    - The shape of the output arrays e and h are (n_steps + 1, N_e) and (n_steps + 1, N_h) respectively, 
+    where N_e and N_h are spatial components of the fields and the rows are the time steps.
+    - The initial conditions are stored in the first row (index 0) of the output arrays.
     """
     print(f"Updating fields for {n_steps} time steps...")
 
     # Preprocessing for efficiency: compute inverses of M_mu and M_eps once
     M_mu_inv = sp.diags(1.0 / M_mu.diagonal())
     M_eps_inv = sp.diags(1.0 / M_eps.diagonal())
+
+    N_e = e_initial.shape[0]
+    N_h = h_initial.shape[0]
+
+    e = np.zeros((n_steps + 1, N_e))
+    h = np.zeros((n_steps + 1, N_h))
+
+    # Store initial conditions
+    e[0, :] = e_initial
+    h[0, :] = h_initial
 
     for n in range(n_steps):
         # e and d are updated at time steps n * delta_t
@@ -32,18 +49,20 @@ def leapfrog_scheme(e, h, b, d, C, C_hat, M_eps, M_mu, j_source, delta_t, n_step
 
         # Step 1: Update Magnetic Flux (b)
         # Equation: b^(n+1/2) = b^(n-1/2) - delta_t * (C * e^n)
-        b = b - delta_t * (C @ e)
+        b = b - delta_t * (C @ e[n,:])
 
         # Step 2: Update Magnetic Field (h)
         # Equation: h^(n+1/2) = M_mu^-1 * b^(n+1/2)
-        h = M_mu_inv @ b
+        h_temp = M_mu_inv @ b
+        h[n + 1, :] = h_temp
 
         # Step 3: Update Electric Flux (d)
         # Equation: d^(n+1) = d^n + delta_t * (C_hat * h^(n+1/2) - j_source^(n+1/2))
-        d = d + delta_t * (C_hat @ h - j_source(delta_t_half))
+        d = d + delta_t * (C_hat @ h_temp - j_source(delta_t_half))
 
         # Step 4: Convert Electric Flux (d) to Electric Field (e)
         # Equation: e^(n+1) = M_eps^-1 * d^(n+1)
-        e = M_eps_inv @ d
+        e_temp = M_eps_inv @ d
+        e[n + 1, :] = e_temp
 
     return e, h
