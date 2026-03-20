@@ -42,10 +42,13 @@ def leapfrog_scheme(e_initial, h_initial, b, d, C, C_hat, M_eps, M_mu, j_source,
     e[0, :] = e_initial
     h[0, :] = h_initial
 
+    b = M_mu @ h_initial  # Initial magnetic flux density
+    d = M_eps @ e_initial  # Initial electric displacement
+
     for n in range(n_steps):
         # e and d are updated at time steps n * delta_t
         # h, b and j are updated at time steps (n + 0.5) * delta_t
-        delta_t_half = (n + 0.5) * delta_t
+        # delta_t_half = (n + 0.5) * delta_t
 
         # Step 1: Update Magnetic Flux (b)
         # Equation: b^(n+1/2) = b^(n-1/2) - delta_t * (C * e^n)
@@ -58,7 +61,7 @@ def leapfrog_scheme(e_initial, h_initial, b, d, C, C_hat, M_eps, M_mu, j_source,
 
         # Step 3: Update Electric Flux (d)
         # Equation: d^(n+1) = d^n + delta_t * (C_hat * h^(n+1/2) - j_source^(n+1/2))
-        d = d + delta_t * (C_hat @ h_temp - j_source(delta_t_half))
+        d = d + delta_t * (C_hat @ h_temp)
 
         # Step 4: Convert Electric Flux (d) to Electric Field (e)
         # Equation: e^(n+1) = M_eps^-1 * d^(n+1)
