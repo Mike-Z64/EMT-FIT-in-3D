@@ -337,7 +337,7 @@ def create_dipole_source(nx, ny, nz, i, j, k, direction, length=1):
     # Return both edge indices (positive and negative poles)
     return (n1 + offset, n2 + offset)
 
-def leapfrog_scheme(e_initial, h_initial, b, d, C, C_hat, M_eps, M_mu, j_source, delta_t, n_steps, frequency, source_index):
+def leapfrog_scheme(e_initial, h_initial, b, d, C, C_hat, M_eps, M_mu, j_source, delta_t, n_steps, frequency, source_index, pec_indices=None, pmc_indices=None):
     """
     Leapfrog scheme function
     ------------------------
@@ -355,6 +355,8 @@ def leapfrog_scheme(e_initial, h_initial, b, d, C, C_hat, M_eps, M_mu, j_source,
     delta_t - time step
     n_steps - number of time steps
     frequency - frequency of the source (default 1 GHz)
+    pec_indices - list of indices where PEC boundary conditions are applied (optional)
+    pmc_indices - list of indices where PMC boundary conditions are applied (optional)
     source_index - single index for point source, or tuple (idx1, idx2) for dipole source
 
     Returns:
@@ -410,6 +412,12 @@ def leapfrog_scheme(e_initial, h_initial, b, d, C, C_hat, M_eps, M_mu, j_source,
         # Step 2: Update Magnetic Field (h)
         # Equation: h^(n+1/2) = M_mu^-1 * b^(n+1/2)
         h_temp = M_mu_inv @ b
+       
+        # Apply PMC Boundary Condition (if provided)
+        if pmc_indices is not None:
+            h_temp[pmc_indices] = 0.0
+            b[pmc_indices] = 0.0 # Zero out flux to prevent non-physical accumulation
+
         h[n + 1, :] = h_temp
 
         # Step 3: Update Electric Flux (d)
@@ -419,6 +427,12 @@ def leapfrog_scheme(e_initial, h_initial, b, d, C, C_hat, M_eps, M_mu, j_source,
         # Step 4: Convert Electric Flux (d) to Electric Field (e)
         # Equation: e^(n+1) = M_eps^-1 * d^(n+1)
         e_temp = M_eps_inv @ d
+        
+        # Apply PEC Boundary Condition (if provided)
+        if pec_indices is not None:
+            e_temp[pec_indices] = 0.0
+            d[pec_indices] = 0.0 # Zero out flux to prevent non-physical accumulation
+
         e[n + 1, :] = e_temp
 
         curr_time = (n + 1) * delta_t
@@ -428,129 +442,139 @@ def leapfrog_scheme(e_initial, h_initial, b, d, C, C_hat, M_eps, M_mu, j_source,
         if is_dipole:
             # For dipole: opposite phases on two edges (180° phase difference)
             e[n+1, source_idx1] = src_voltage
+            d[source_idx1] = M_eps.diagonal()[source_idx1] * src_voltage
             e[n+1, source_idx2] = -src_voltage  # Opposite phase
+            d[source_idx2] = M_eps.diagonal()[source_idx2] * -src_voltage
         else:
             # For point source: single edge
             e[n+1, source_index] = src_voltage
+            d[source_index] = M_eps.diagonal()[source_index] * src_voltage
     
     return e, h
 
 
-def animate_2d_slice(e_history, grid, slice_index, plane='xy', save_as_gif=None, use_db=False):
+def animate_slice(history_array, grid, plane, slice_index, component='z', is_db=True):
     """
-    Creates an animation of the Electric field in a 2D plane across all time steps.
+    Creates an animation of a specific field component in a chosen plane.
     
     Parameters:
-    e_history - field history over time
-    grid - grid dictionary with coordinates
-    slice_index - index of the fixed coordinate (z for xy plane, y for xz plane)
-    plane - 'xy' or 'xz' to specify which plane to animate
-    save_as_gif - filename to save animation as GIF (e.g., 'animation.gif'). If None, only displays.
-    use_db - if True, plot magnitude in dB scale; if False, plot linear scale
+    - plane: 'xy', 'xz', or 'yz'
+    - slice_index: The grid index (0 to nx/ny/nz) to slice through.
+    - component: 'x', 'y', or 'z'
+    - is_db: If True, uses sequential colormap for dB. If False, uses diverging for raw fields.
     """
     nx, ny, nz = grid["nx"], grid["ny"], grid["nz"]
     N_total = nx * ny * nz
+    total_steps = history_array.shape[0]
     
-    total_steps = e_history.shape[0]
-    
-    print("\nExtracting frames for animation... this might take a moment.")
-    
-    if plane.lower() == 'xy':
-        # Extract Z-directed field (E_z) in XY plane
-        z_offset = 2 * N_total
-        E_frames = np.zeros((total_steps, ny, nx))
-        
-        for t in range(total_steps):
-            for j in range(ny):
-                for i in range(nx):
-                    n = get_node_index(i, j, slice_index, nx, ny)
-                    edge_index = n + z_offset
-                    E_frames[t, j, i] = e_history[t, edge_index]
-        
-        x_coords = grid["G"]["x"]
-        y_coords = grid["G"]["y"]
-        extent = [0, grid["G"]["x"][-1], 0, grid["G"]["y"][-1]]
-        xlabel = 'X coordinate (m)'
-        ylabel = 'Y coordinate (m)'
-        field_label = '$E_z$'
-        title_base = 'XY Cross-Section'
-        
-    elif plane.lower() == 'xz':
-        # Extract Y-directed field (E_y) in XZ plane
-        y_offset = N_total
-        E_frames = np.zeros((total_steps, nz, nx))
-        
-        for t in range(total_steps):
-            for k in range(nz):
-                for i in range(nx):
-                    n = get_node_index(i, slice_index, k, nx, ny)
-                    edge_index = n + y_offset
-                    E_frames[t, k, i] = e_history[t, edge_index]
-        
-        x_coords = grid["G"]["x"]
-        z_coords = grid["G"]["z"]
-        extent = [0, grid["G"]["x"][-1], 0, grid["G"]["z"][-1]]
-        xlabel = 'X coordinate (m)'
-        ylabel = 'Z coordinate (m)'
-        field_label = '$E_y$'
-        title_base = 'XZ Cross-Section'
+    # 1. Determine the offset for the chosen component
+    if component == 'x':
+        offset = 0
+    elif component == 'y':
+        offset = N_total
+    elif component == 'z':
+        offset = 2 * N_total
     else:
-        raise ValueError("plane must be 'xy' or 'xz'")
+        raise ValueError("Component must be 'x', 'y', or 'z'")
+        
+    print(f"\nExtracting {component}-directed component in the {plane.upper()} plane...")
 
-    # Convert to dB if requested
-    if use_db:
-        # Find reference level (max absolute value across all time steps)
-        E_ref = np.max(np.abs(E_frames))
-        if E_ref == 0:
-            E_ref = 1e-12
-        # Convert magnitude to dB: 20*log10(|E|/E_ref)
-        E_frames = 20 * np.log10(np.abs(E_frames) / E_ref + 1e-20)  # Add small value to avoid log(0)
-        unit_label = 'dB'
-        vmin, vmax = -60, 0  # Typical dB range
-        cmap = 'viridis'
+    # 2. Reshape the 1D data into a 4D array: (time, Z, Y, X)
+    # This completely removes the need for slow nested for-loops!
+    field_3d = history_array[:, offset : offset + N_total].reshape((total_steps, nz, ny, nx))
+    
+    # 3. Extract the requested 2D slice and setup the plot limits
+    if plane.lower() == 'xy':
+        frames = field_3d[:, slice_index, :, :]
+        extent = [0, grid["G"]["x"][-1], 0, grid["G"]["y"][-1]]
+        xlabel, ylabel = 'X coordinate (m)', 'Y coordinate (m)'
+    elif plane.lower() == 'xz':
+        frames = field_3d[:, :, slice_index, :]
+        extent = [0, grid["G"]["x"][-1], 0, grid["G"]["z"][-1]]
+        xlabel, ylabel = 'X coordinate (m)', 'Z coordinate (m)'
+    elif plane.lower() == 'yz':
+        frames = field_3d[:, :, :, slice_index]
+        extent = [0, grid["G"]["y"][-1], 0, grid["G"]["z"][-1]]
+        xlabel, ylabel = 'Y coordinate (m)', 'Z coordinate (m)'
     else:
-        unit_label = 'V'
-        vmin = -np.max(np.abs(E_frames))
-        vmax = np.max(np.abs(E_frames))
-        if vmax == 0:
-            vmax = 1e-12
-        cmap = 'RdBu'
+        raise ValueError("Plane must be 'xy', 'xz', or 'yz'")
 
     print("Frames extracted! Starting playback...")
 
-    # --- Setup the Animation Figure ---
+    # 4. Setup the Animation Figure
     fig, ax = plt.subplots(figsize=(7, 6))
+    
+    # Choose colormap based on whether we are plotting dB or raw fields
+    if is_db:
+        cmap = 'magma'
+        vmin, vmax = np.min(frames), np.max(frames)
+        label = f'Field Intensity (dB)'
+    else:
+        cmap = 'seismic'
+        max_val = np.max(np.abs(frames))
+        vmin, vmax = -max_val, max_val
+        label = f'Field Amplitude'
         
-    # Draw the very first frame
-    im = ax.imshow(E_frames[0], origin='lower', cmap=cmap, 
+    im = ax.imshow(frames[0], origin='lower', cmap=cmap, 
                    vmin=vmin, vmax=vmax, extent=extent)
     
-    fig.colorbar(im, ax=ax, label=f'Electric Field {field_label} ({unit_label})')
-    title = ax.set_title(f'{title_base} of {field_label}\nTime Step = 0')
+    fig.colorbar(im, ax=ax, label=label)
+    title = ax.set_title(f'{plane.upper()} Cross-Section of {component}-component\nTime Step = 0')
     ax.set_xlabel(xlabel)
     ax.set_ylabel(ylabel)
 
-    # --- The Update Function for the Animation ---
+    # 5. Update Function for Animation
     def update(frame):
-        im.set_array(E_frames[frame])
-        title.set_text(f'{title_base} of {field_label}\nTime Step = {frame}')
+        im.set_array(frames[frame])
+        title.set_text(f'{plane.upper()} Cross-Section of {component}-component\nTime Step = {frame}')
         return [im, title]
 
-    # Create the animation object (interval is milliseconds between frames)
-    ani = animation.FuncAnimation(fig, update, frames=total_steps, 
-                                  interval=50, blit=True)
-    
-    # Save as GIF if filename provided
-    if save_as_gif:
-        print(f"\nSaving animation as {save_as_gif}...")
-        writer = animation.PillowWriter(fps=20)
-        ani.save(save_as_gif, writer=writer)
-        print(f"Animation saved to {save_as_gif}")
+    ani = animation.FuncAnimation(fig, update, frames=total_steps, interval=50, blit=True)
     
     plt.tight_layout()
     plt.show()
     
     return ani
+
+
+def calculate_boundary_indices(nx, ny, nz):
+    """
+    Generates the 1D indices for PEC or PMC boundaries.
+    as well as zeroes out E_tan on the outer walls of the 3D grid
+    """
+    print("Calculating PEC/PMC boundary indices...")
+    N_total = nx * ny * nz
+    boundary_list = []
+
+    for i in range(nx):
+        for j in range(ny):
+            for k in range(nz):
+                # We have this implemented by Carmelo
+                n = get_node_index(i, j, k, nx, ny)
+
+                # 1) X-normal walls
+                # y_tan=0, z_tan=0
+                if i == 0 or i == nx - 1:
+                    boundary_list.append(n + N_total)      # y_tan offset
+                    boundary_list.append(n + 2 * N_total)  # z_tan offset
+
+                # 2) Y-normal walls
+                # x_tan=0, z_tan=0
+                if j == 0 or j == ny - 1:
+                    boundary_list.append(n)                # x_tan offset (0)
+                    boundary_list.append(n + 2 * N_total)  # z_tan offset
+
+                # 3) Z-normal walls
+                # x_tan=0, y_tan=0
+                if k == 0 or k == nz - 1:
+                    boundary_list.append(n)                # x_tan offset (0)
+                    boundary_list.append(n + N_total)      # y_tan offset
+
+    # Remove duplicates at corners and edges
+    boundary_indices = np.unique(boundary_list)
+    print(f"Boundary nodes mapped: {len(boundary_indices)}")
+
+    return boundary_indices
 
 ####################
 ## MAIN function  ##
@@ -564,8 +588,8 @@ def main(source_type='dipole'):
     source_type: 'point' for point source, 'dipole' for dipole source (default='dipole')
     """
     # grid parameters
-    x_len, y_len, z_len = 1, 1, 1
-    nx, ny, nz = 26, 26, 26
+    x_len, y_len, z_len = 1, 3, 1
+    nx, ny, nz = 26, 3*26, 26
     
 
     # Define grid and topological matrices
@@ -640,7 +664,7 @@ def main(source_type='dipole'):
         print(f"Point source placed at ({center_x}, {center_y}, {center_z}) pointing in {orientation}.")
         print(f"Edge index: {source_index}")
     elif source_type.lower() == 'dipole':
-        dipole_length = 5
+        dipole_length = 3
         # Offset the starting position so the middle of the dipole is at the center
         dipole_offset = dipole_length // 2
         if orientation == 'x':
@@ -710,7 +734,10 @@ def main(source_type='dipole'):
         delta_t=delta_t, 
         n_steps=n_steps,
         frequency=1e9,
-        source_index=source_index
+        source_index=source_index,
+        #pec_indices=None,
+        pec_indices=calculate_boundary_indices(nx, ny, nz),
+        pmc_indices=None
     )
     
     print(f"\nSimulation Complete!")
@@ -721,9 +748,15 @@ def main(source_type='dipole'):
     # =============================
     print("\n--- Plotting Results ---")
     
-    # Run the animation on the center Y-plane (XZ plane) with dB scale
-    # Put save_as_gif to None if you don't want to save the animation as a GIF file
-    ani = animate_2d_slice(e_history, grid, center_y, plane='xz', save_as_gif='dipole.gif', use_db=True)
+    # Define a tiny floor value to prevent log10(0)
+    epsilon = 1e-12
+    
+    # Convert fields to a 20*log10 dB scale using the absolute magnitude
+    e_history_db = 20 * np.log10(np.abs(e_history) + epsilon)
+    h_history_db = 20 * np.log10(np.abs(h_history) + epsilon)
+
+    # Plot E_z in the XZ plane (slicing through the center Y-coordinate)
+    ani_e = animate_slice(e_history_db, grid, plane='yz', slice_index=center_x, component='x', is_db=True)
 
 if __name__ == "__main__":
     # Change 'dipole' to 'point' to use a point source instead
