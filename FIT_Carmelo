@@ -453,7 +453,7 @@ def leapfrog_scheme(e_initial, h_initial, b, d, C, C_hat, M_eps, M_mu, j_source,
     return e, h
 
 
-def animate_slice(history_array, grid, plane, slice_index, component='z', is_db=True):
+def animate_slice(history_array, grid, plane, slice_index, component='z', is_db=True, save_as_gif=None):
     """
     Creates an animation of a specific field component in a chosen plane.
     
@@ -462,6 +462,7 @@ def animate_slice(history_array, grid, plane, slice_index, component='z', is_db=
     - slice_index: The grid index (0 to nx/ny/nz) to slice through.
     - component: 'x', 'y', or 'z'
     - is_db: If True, uses sequential colormap for dB. If False, uses diverging for raw fields.
+    - save_as_gif: filename to save animation as GIF (e.g., 'animation.gif'). If None, only displays.
     """
     nx, ny, nz = grid["nx"], grid["ny"], grid["nz"]
     N_total = nx * ny * nz
@@ -532,6 +533,12 @@ def animate_slice(history_array, grid, plane, slice_index, component='z', is_db=
     ani = animation.FuncAnimation(fig, update, frames=total_steps, interval=50, blit=True)
     
     plt.tight_layout()
+    
+    if save_as_gif:
+        print(f"Saving animation as {save_as_gif}...")
+        ani.save(save_as_gif, writer='pillow')
+        print("GIF saved successfully!")
+    
     plt.show()
     
     return ani
@@ -588,13 +595,20 @@ def main(source_type='dipole'):
     source_type: 'point' for point source, 'dipole' for dipole source (default='dipole')
     """
     # grid parameters
-    x_len, y_len, z_len = 1, 3, 1
-    nx, ny, nz = 26, 3*26, 26
+    x_len, y_len, z_len = 1, 1, 1
+    nx, ny, nz = 50, 50, 50
     
 
     # Define grid and topological matrices
     grid = FITGridEven(x_len, y_len, z_len, nx, ny, nz)
     C, S, C_hat, S_hat = topological_matrices(grid)
+
+    # Calculate frequency to make dipole lambda/2
+    c = 3e8  # speed of light in m/s
+    dipole_length = 3
+    spacing = grid['G']['dz']  # assuming z orientation
+    L = dipole_length * spacing
+    frequency = c / (2 * L)
 
     print("\n--- Verification ---")
     print(f"Primary X points: {grid['G']['x']}")
@@ -664,7 +678,6 @@ def main(source_type='dipole'):
         print(f"Point source placed at ({center_x}, {center_y}, {center_z}) pointing in {orientation}.")
         print(f"Edge index: {source_index}")
     elif source_type.lower() == 'dipole':
-        dipole_length = 3
         # Offset the starting position so the middle of the dipole is at the center
         dipole_offset = dipole_length // 2
         if orientation == 'x':
@@ -675,6 +688,14 @@ def main(source_type='dipole'):
             dipole_pos = (center_x, center_y, center_z - dipole_offset)
         
         source_index = create_dipole_source(nx, ny, nz, dipole_pos[0], dipole_pos[1], dipole_pos[2], orientation, length=dipole_length)
+        
+        # Calculate physical length of the dipole
+        spacing = grid['G']['d' + orientation]
+        L_physical = dipole_length * spacing
+        wavelength = c / frequency
+        print(f"Dipole length: {L_physical:.4f} m")
+        print(f"Dipole length: {L_physical / wavelength:.4f} λ")
+        
         print(f"\n--- Source Definition ---")
         print(f"Dipole source centered at ({center_x}, {center_y}, {center_z}) pointing in {orientation}.")
         print(f"Edge indices (positive, negative): {source_index}")
@@ -733,7 +754,7 @@ def main(source_type='dipole'):
         j_source=1,  # we can replace this with j_source_vector if we want a time-varying source
         delta_t=delta_t, 
         n_steps=n_steps,
-        frequency=1e9,
+        frequency=frequency,
         source_index=source_index,
         #pec_indices=None,
         pec_indices=calculate_boundary_indices(nx, ny, nz),
@@ -742,6 +763,8 @@ def main(source_type='dipole'):
     
     print(f"\nSimulation Complete!")
     print(f"E-field history matrix shape: {e_history.shape}")
+    print(f"Impedance check Z=: {np.max(np.abs(e_history[100,:])/np.abs(h_history[100,:]))}")
+
 
     # =============================
     #   Visualization
