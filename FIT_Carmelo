@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 import scipy.sparse as sp
 from pprint import pprint
 import matplotlib.animation as animation
+from matplotlib.widgets import Slider
 
 ###############################
 ## GRID definition function  ##
@@ -455,7 +456,7 @@ def leapfrog_scheme(e_initial, h_initial, b, d, C, C_hat, M_eps, M_mu, j_source,
 
 def animate_slice(history_array, grid, plane, slice_index, component='z', is_db=True, save_as_gif=None):
     """
-    Creates an animation of a specific field component in a chosen plane.
+    Creates an interactive plot of a specific field component in a chosen plane with a slider to control frames.
     
     Parameters:
     - plane: 'xy', 'xz', or 'yz'
@@ -500,10 +501,10 @@ def animate_slice(history_array, grid, plane, slice_index, component='z', is_db=
     else:
         raise ValueError("Plane must be 'xy', 'xz', or 'yz'")
 
-    print("Frames extracted! Starting playback...")
+    print("Frames extracted! Creating interactive plot...")
 
-    # 4. Setup the Animation Figure
-    fig, ax = plt.subplots(figsize=(7, 6))
+    # 4. Setup the Interactive Figure with Slider
+    fig, (ax, ax_slider) = plt.subplots(2, 1, figsize=(7, 8), gridspec_kw={'height_ratios': [8, 1]})
     
     # Choose colormap based on whether we are plotting dB or raw fields
     if is_db:
@@ -519,29 +520,41 @@ def animate_slice(history_array, grid, plane, slice_index, component='z', is_db=
     im = ax.imshow(frames[0], origin='lower', cmap=cmap, 
                    vmin=vmin, vmax=vmax, extent=extent)
     
-    fig.colorbar(im, ax=ax, label=label)
+    fig.colorbar(im, ax=ax, label=label, shrink=0.8)
     title = ax.set_title(f'{plane.upper()} Cross-Section of {component}-component\nTime Step = 0')
     ax.set_xlabel(xlabel)
     ax.set_ylabel(ylabel)
 
-    # 5. Update Function for Animation
-    def update(frame):
+    # Create slider
+    slider = Slider(ax_slider, 'Time Step', 0, total_steps-1, valinit=0, valstep=1)
+    
+    # Update function for slider
+    def update(val):
+        frame = int(slider.val)
         im.set_array(frames[frame])
         title.set_text(f'{plane.upper()} Cross-Section of {component}-component\nTime Step = {frame}')
-        return [im, title]
+        fig.canvas.draw_idle()
 
-    ani = animation.FuncAnimation(fig, update, frames=total_steps, interval=50, blit=True)
+    # Connect slider to update function
+    slider.on_changed(update)
     
     plt.tight_layout()
     
     if save_as_gif:
         print(f"Saving animation as {save_as_gif}...")
+        # For saving, we'll still use the animation approach
+        def update_for_anim(frame):
+            im.set_array(frames[frame])
+            title.set_text(f'{plane.upper()} Cross-Section of {component}-component\nTime Step = {frame}')
+            return [im, title]
+
+        ani = animation.FuncAnimation(fig, update_for_anim, frames=total_steps, interval=50, blit=True)
         ani.save(save_as_gif, writer='pillow')
         print("GIF saved successfully!")
     
     plt.show()
     
-    return ani
+    return slider
 
 
 def calculate_boundary_indices(nx, ny, nz):
@@ -596,8 +609,8 @@ def main(source_type='dipole'):
     """
     # grid parameters
     x_len, y_len, z_len = 1, 1, 1
-    nx, ny, nz = 50, 50, 50
-    
+    nx, ny, nz = 98, 98, 98    
+
 
     # Define grid and topological matrices
     grid = FITGridEven(x_len, y_len, z_len, nx, ny, nz)
@@ -605,7 +618,7 @@ def main(source_type='dipole'):
 
     # Calculate frequency to make dipole lambda/2
     c = 3e8  # speed of light in m/s
-    dipole_length = 3
+    dipole_length = 18
     spacing = grid['G']['dz']  # assuming z orientation
     L = dipole_length * spacing
     frequency = c / (2 * L)
@@ -695,6 +708,8 @@ def main(source_type='dipole'):
         wavelength = c / frequency
         print(f"Dipole length: {L_physical:.4f} m")
         print(f"Dipole length: {L_physical / wavelength:.4f} λ")
+        print(f"Frequency: {frequency:.4f} Hz")
+
         
         print(f"\n--- Source Definition ---")
         print(f"Dipole source centered at ({center_x}, {center_y}, {center_z}) pointing in {orientation}.")
@@ -705,7 +720,7 @@ def main(source_type='dipole'):
     # =========================================
     #  Preparation for the solver (leapfrog scheme) 
     # =========================================
-    print("\n--- what is needed for leapfrog ---")
+    # print("\n--- what is needed for leapfrog ---")
     
     # Size of the full field vectors (3 edges per node)
     N_vector = 3 * N_total
@@ -732,9 +747,9 @@ def main(source_type='dipole'):
     
     n_steps = 300  # Total time iterations
     
-    print(f"Speed of light: {c0:.2e} m/s")
-    print(f"Calculated Time Step (based on Courant): {delta_t:.4e} s")
-    print(f"Total physical simulation time: {n_steps * delta_t:.4e} s")
+    # print(f"Speed of light: {c0:.2e} m/s")
+    # print(f"Calculated Time Step (based on Courant): {delta_t:.4e} s")
+    # print(f"Total physical simulation time: {n_steps * delta_t:.4e} s")
 
     # =============================
     #   Running the Simulation 
@@ -762,8 +777,6 @@ def main(source_type='dipole'):
     )
     
     print(f"\nSimulation Complete!")
-    print(f"E-field history matrix shape: {e_history.shape}")
-    print(f"Impedance check Z=: {np.max(np.abs(e_history[100,:])/np.abs(h_history[100,:]))}")
 
 
     # =============================
@@ -778,8 +791,9 @@ def main(source_type='dipole'):
     e_history_db = 20 * np.log10(np.abs(e_history) + epsilon)
     h_history_db = 20 * np.log10(np.abs(h_history) + epsilon)
 
-    # Plot E_z in the XZ plane (slicing through the center Y-coordinate)
-    ani_e = animate_slice(e_history_db, grid, plane='yz', slice_index=center_x, component='x', is_db=True)
+    # Plot E_x,y,z in the XZ,XY,YZ plane (slicing through the center Y-coordinate)
+    ani_e = animate_slice(e_history_db, grid, plane='xy', slice_index=center_z  , component='x', is_db=True)
+
 
 if __name__ == "__main__":
     # Change 'dipole' to 'point' to use a point source instead
