@@ -560,7 +560,6 @@ def animate_slice(history_array, grid, plane, slice_index, component='z', is_db=
     
     plt.show()
     
-    return slider
 
 
 def calculate_boundary_indices(nx, ny, nz):
@@ -723,14 +722,8 @@ def main(source_type='dipole'):
         print(f"\n Source Definition ")
         print(f"Dipole source centered at ({center_x}, {center_y}, {center_z}) pointing in {orientation}.")
         print(f"Edge indices (positive, negative): {source_index}")
-    elif source_type.lower() == 'dipole2':
-        dipole_length = 3
-        source_index = create_dipole2_source(nx, ny, nz, center_x, center_y, center_z, length=dipole_length)
-        print(f"\n Source Definition ")
-        print(f"Dipole2 source centered at ({center_x}, {center_y}, {center_z}) with length {dipole_length}.")
-        print(f"Edge indices (middle, +Z, -Z): {source_index}")
     else:
-        raise ValueError(f"Unknown source type: {source_type}. Use 'point', 'dipole', or 'dipole2'.")
+        raise ValueError(f"Unknown source type: {source_type}. Use 'point', 'dipole'.")
 
     # =========================================
     #  Preparation for the solver (leapfrog scheme) 

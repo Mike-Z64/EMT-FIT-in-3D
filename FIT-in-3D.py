@@ -338,33 +338,6 @@ def create_dipole_source(nx, ny, nz, i, j, k, direction, length=1):
     # Return both edge indices (positive and negative poles)
     return (n1 + offset, n2 + offset)
 
-def create_dipole2_source(nx, ny, nz, i, j, k, length=1):
-    """
-    Creates a dipole source using three sources: one in the middle and two extending in + and - Z directions.
-    The outer two are in phase with each other and out of phase with the middle one.
-    
-    Parameters:
-    length: number of cells separating the outer elements from the middle (default=1)
-    
-    Returns: tuple of (idx_middle, idx_plus_z, idx_minus_z) for the three edges
-    """
-    N_total = nx * ny * nz
-    offset_z = 2 * N_total  # Z-direction edges
-    
-    # Middle edge
-    n_middle = get_node_index(i, j, k, nx, ny)
-    idx_middle = n_middle + offset_z
-    
-    # +Z edge
-    n_plus = get_node_index(i, j, min(k + length, nz - 1), nx, ny)
-    idx_plus = n_plus + offset_z
-    
-    # -Z edge
-    n_minus = get_node_index(i, j, max(k - length, 0), nx, ny)
-    idx_minus = n_minus + offset_z
-    
-    return (idx_middle, idx_plus, idx_minus)
-
 def leapfrog_scheme(e_initial, h_initial, b, d, C, C_hat, M_eps, M_mu, delta_t, n_steps, frequency, source_index, pec_indices=None):
     """
     Leapfrog scheme function
@@ -383,7 +356,7 @@ def leapfrog_scheme(e_initial, h_initial, b, d, C, C_hat, M_eps, M_mu, delta_t, 
     n_steps - number of time steps
     frequency - frequency of the source (default 1 GHz)
     pec_indices - list of indices where PEC boundary conditions are applied (optional)
-    source_index - single index for point source, tuple (idx1, idx2) for dipole source, tuple (idx_middle, idx_plus, idx_minus) for dipole2 source
+    source_index - single index for point source, tuple (idx1, idx2) for dipole source
 
     Returns:
     e - updated electric field
@@ -400,16 +373,11 @@ def leapfrog_scheme(e_initial, h_initial, b, d, C, C_hat, M_eps, M_mu, delta_t, 
 
     # Check if source is dipole or point source
     is_dipole = False
-    is_dipole2 = False
     if isinstance(source_index, tuple):
         if len(source_index) == 2:
             is_dipole = True
             source_idx1, source_idx2 = source_index
             print(f"  -> Applying DIPOLE excitation with opposite phases at indices {source_idx1} and {source_idx2}")
-        elif len(source_index) == 3:
-            is_dipole2 = True
-            idx_middle, idx_plus, idx_minus = source_index
-            print(f"  -> Applying DIPOLE2 excitation with phases: middle(-), +Z(+), -Z(+) at indices {idx_middle}, {idx_plus}, {idx_minus}")
         else:
             raise ValueError("source_index tuple must have 2 or 3 elements")
     else:
@@ -475,14 +443,6 @@ def leapfrog_scheme(e_initial, h_initial, b, d, C, C_hat, M_eps, M_mu, delta_t, 
             d[source_idx1] = M_eps.diagonal()[source_idx1] * src_voltage
             e[n+1, source_idx2] = -src_voltage  # Opposite phase
             d[source_idx2] = M_eps.diagonal()[source_idx2] * -src_voltage
-        elif is_dipole2:
-            # For dipole2: middle opposite to outer two
-            e[n+1, idx_middle] = -src_voltage
-            d[idx_middle] = M_eps.diagonal()[idx_middle] * (-src_voltage)
-            e[n+1, idx_plus] = src_voltage
-            d[idx_plus] = M_eps.diagonal()[idx_plus] * src_voltage
-            e[n+1, idx_minus] = src_voltage
-            d[idx_minus] = M_eps.diagonal()[idx_minus] * src_voltage
         else:
             # For point source: single edge
             e[n+1, source_index] = src_voltage
@@ -654,7 +614,7 @@ def main(source_type='dipole'):
     """
     # grid parameters
     x_len, y_len, z_len = 1, 1, 1
-    nx, ny, nz = 64,64,64 #98, 98, 98    
+    nx, ny, nz = 98, 98, 98    
 
 
 
@@ -762,14 +722,8 @@ def main(source_type='dipole'):
         print(f"\n Source Definition ")
         print(f"Dipole source centered at ({center_x}, {center_y}, {center_z}) pointing in {orientation}.")
         print(f"Edge indices (positive, negative): {source_index}")
-    elif source_type.lower() == 'dipole2':
-        dipole_length = 3
-        source_index = create_dipole2_source(nx, ny, nz, center_x, center_y, center_z, length=dipole_length)
-        print(f"\n Source Definition ")
-        print(f"Dipole2 source centered at ({center_x}, {center_y}, {center_z}) with length {dipole_length}.")
-        print(f"Edge indices (middle, +Z, -Z): {source_index}")
     else:
-        raise ValueError(f"Unknown source type: {source_type}. Use 'point', 'dipole', or 'dipole2'.")
+        raise ValueError(f"Unknown source type: {source_type}. Use 'point', 'dipole'.")
 
     # =========================================
     #  Preparation for the solver (leapfrog scheme) 
@@ -799,7 +753,7 @@ def main(source_type='dipole'):
     dt_limit = 1.0 / (c0 * np.sqrt((1/dx**2) + (1/dy**2) + (1/dz**2)))
     delta_t = 0.99 * dt_limit  # actual run-time, less than limit for stability
     
-    n_steps = 600 #300 # Total time iterations
+    n_steps = 300 # Total time iterations
     
     # print(f"Speed of light: {c0:.2e} m/s")
     # print(f"Calculated Time Step (based on Courant): {delta_t:.4e} s")
@@ -846,5 +800,5 @@ def main(source_type='dipole'):
 
 
 if __name__ == "__main__":
-    # Change 'dipole' to 'point' or 'dipole2' to use different sources
-    main(source_type='dipole2')
+    # Change 'dipole' to 'point' to use different sources
+    main(source_type='dipole')
