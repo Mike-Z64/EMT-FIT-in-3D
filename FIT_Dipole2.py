@@ -338,7 +338,7 @@ def create_dipole_source(nx, ny, nz, i, j, k, direction, length=1):
     # Return both edge indices (positive and negative poles)
     return (n1 + offset, n2 + offset)
 
-def create_dipole2_source(nx, ny, nz, i, j, k, length=1):
+def create_dipole2_source(nx, ny, nz, i, j, k, length=5):
     """
     Creates a dipole source using three sources: one in the middle and two extending in + and - Z directions.
     The outer two are in phase with each other and out of phase with the middle one.
@@ -654,7 +654,7 @@ def main(source_type='dipole'):
     """
     # grid parameters
     x_len, y_len, z_len = 1, 1, 1
-    nx, ny, nz = 64,64,64 #98, 98, 98    
+    nx, ny, nz = 98, 98, 98    
 
 
 
@@ -763,7 +763,7 @@ def main(source_type='dipole'):
         print(f"Dipole source centered at ({center_x}, {center_y}, {center_z}) pointing in {orientation}.")
         print(f"Edge indices (positive, negative): {source_index}")
     elif source_type.lower() == 'dipole2':
-        dipole_length = 3
+        dipole_length = 18
         source_index = create_dipole2_source(nx, ny, nz, center_x, center_y, center_z, length=dipole_length)
         print(f"\n Source Definition ")
         print(f"Dipole2 source centered at ({center_x}, {center_y}, {center_z}) with length {dipole_length}.")
@@ -799,7 +799,7 @@ def main(source_type='dipole'):
     dt_limit = 1.0 / (c0 * np.sqrt((1/dx**2) + (1/dy**2) + (1/dz**2)))
     delta_t = 0.99 * dt_limit  # actual run-time, less than limit for stability
     
-    n_steps = 600 #300 # Total time iterations
+    n_steps = 400 # Total time iterations
     
     # print(f"Speed of light: {c0:.2e} m/s")
     # print(f"Calculated Time Step (based on Courant): {delta_t:.4e} s")
@@ -828,6 +828,8 @@ def main(source_type='dipole'):
     )
     
     print(f"\nSimulation Complete!")
+
+    
 
     # =============================
     #   Visualization

@@ -783,6 +783,120 @@ def main(source_type='dipole'):
     
     print(f"\nSimulation Complete!")
 
+    """ Impedance Probing and field conversion for future reference:
+    # ============================================
+    #   Impedance Probing 
+    # ============================================
+    from scipy.signal import hilbert
+    print("\n--- Time-Domain Impedance Check ---")
+
+    # Be aware that to do this you must choose your probe locations 
+    # and grid size carefully to see ant viable results 
+    # (take into account wave propagation time, reflections, and whether the wave has reached steady-state yet)
+    
+    # Place probe along the X-axis (in the far-field if that applies)
+    distance_from_source = 25 
+    probe_x = center_x + distance_from_source
+    probe_y = center_y       
+    probe_z = center_z       
+
+    # Get the corresponding node indices for the probe location
+    probe_node = get_node_index(probe_x, probe_y, probe_z, nx, ny)
+    probe_node_prev_x = get_node_index(probe_x - 1, probe_y, probe_z, nx, ny)
+    
+    # Calculate the corresponding indices in the state vectors for E_z and H_y at the probe location
+    ez_idx = probe_node + (2 * N_total)
+    hy_idx = probe_node + N_total
+    hy_idx_prev_x = probe_node_prev_x + N_total # We need this for spatial alignment of H_y to the same location as E_z
+
+    # Extract raw Voltages and Currents
+    e_z_voltage = e_history[:, ez_idx]
+    e_z_aligned = e_z_voltage[:-1] 
+    
+    # For H_y, we need to spatially align it to the same location as E_z by averaging the values at probe_node and probe_node_prev_x
+    h_y_current_spat_aligned = 0.5 * (h_history[:, hy_idx] + h_history[:, hy_idx_prev_x])
+    h_y_aligned = 0.5 * (h_y_current_spat_aligned[:-1] + h_y_current_spat_aligned[1:])
+    
+    # Convert to fields
+    E_z_field = e_z_aligned / dz
+    H_y_field = h_y_aligned / dy
+    
+    # Calculate Impedance via Moving RMS Method (good against transient noise)
+    
+    # Calculate how many time steps make up exactly one 1 GHz wave period 
+    # (frequency chosen arbitrarily for this test)
+    target_frequency = 1e9
+    period = 1.0 / target_frequency
+    steps_per_period = int(period / delta_t)
+    
+    # Create a uniform moving average window
+    window = np.ones(steps_per_period) / steps_per_period
+    
+    # Calculate the moving average of the squared fields
+    # 'valid' mode automatically truncates the messy edges of the convolution
+    e_z_sq_avg = np.convolve(E_z_field**2, window, mode='valid')
+    h_y_sq_avg = np.convolve(H_y_field**2, window, mode='valid')
+    
+    # Calculate Z by taking the square root of the ratio of averaged squared fields
+    # Add small epsilon to avoid division by zero
+    epsilon = 1e-20
+    Z_time = np.sqrt(e_z_sq_avg / (h_y_sq_avg + epsilon))
+    
+    # The convolution slightly shrinks the array, so we adjust the time axis to match
+    time_axis = np.arange(len(Z_time)) * delta_t + (period / 2.0)
+    
+    # Find the steady-state error using the very last stable point
+    # Take this with a grain of salt though (most likely the simulation doesn't reach steady-state yet)
+    final_Z = Z_time[-1]
+    Z_theory = 120 * np.pi
+    error = abs(final_Z - Z_theory) / Z_theory * 100
+    
+    print(f"Final Simulated Impedance: {final_Z:.2f} Ohms")
+    print(f"Error: {error:.2f}%")
+    
+    # Plot the Impedance vs Time
+    plt.figure(figsize=(10, 6))
+    
+    # Only plot the region after the wave has safely passed the probe
+    # Calculate your own arrival time
+    arrival_time = 3e-9 
+    mask = time_axis > arrival_time
+    
+    plt.plot(time_axis[mask]*1e9, Z_time[mask], '-', linewidth=3, label='Simulated $|Z(t)|$ (Moving RMS)', color='blue')
+    plt.axhline(Z_theory, color='red', linestyle='--', linewidth=2, label=f'Theoretical $Z_0 \simeq {Z_theory:.1f} \Omega$')
+    
+    plt.title(f"Wave Impedance vs Time (Moving RMS Method)\nDistance from source: {distance_from_source} cells (Far-Field)")
+    plt.xlabel("Time (ns)")
+    plt.ylabel("Impedance ($\Omega$)")
+    
+    plt.ylim(360, 400) 
+    plt.legend()
+    plt.grid(True, linestyle='--', alpha=0.6)
+    plt.show()
+
+    exit()
+
+    # ============================
+    #   Convert voltages to fields
+    # ============================
+    print("\n--- Converting Voltages to Fields for Visualization ---")
+
+    # Create an array of inverse lengths matching the structure of the state vectors:
+    # [N_total for X, N_total for Y, N_total for Z]
+    inv_lengths = np.concatenate([
+        np.full(N_total, 1.0 / dx),
+        np.full(N_total, 1.0 / dy),
+        np.full(N_total, 1.0 / dz)
+    ])
+    
+    # NumPy broadcasting - multiply the e/h_history vectors by the corresponding inverse lengths to get fields in V/m and A/m
+    # e_history shape is (time_steps, 3*N_total), inv_lengths is (3*N_total,)
+    E_field = e_history * inv_lengths
+    H_field = h_history * inv_lengths
+
+    print("Conversion complete!")
+    """
+
     # =============================
     #   Visualization
     # =============================
